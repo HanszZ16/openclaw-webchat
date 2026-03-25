@@ -2,7 +2,7 @@
  * Parse URL parameters for iframe embedding mode.
  *
  * Usage:
- *   <iframe src="http://host:5200/?user=zhonghua&ws=ws://gateway:18789&pwd=secret"></iframe>
+ *   <iframe src="http://host:5200/?user=zhonghua&ws=ws://gateway:18789&pwd=your_password"></iframe>
  *
  * Params:
  *   - user: username → used as session key

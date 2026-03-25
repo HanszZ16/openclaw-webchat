@@ -90,7 +90,7 @@ export function ChatView({
 
   return (
     <div className="flex flex-col h-screen bg-white">
-      {/* Header - 国家电网绿色风格 */}
+      {/* Header */}
       <header className="shrink-0 border-b border-emerald-100">
         {/* Top bar with brand */}
         <div className="flex items-center justify-between px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500">

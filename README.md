@@ -141,7 +141,7 @@ WebChat 通过单一 WebSocket 连接与 OpenClaw Gateway 通信，使用的 RPC
 
 ```html
 <iframe
-  src="http://服务器IP:5200/?user=zhonghua&ws=ws://服务器IP:18789&pwd=密码"
+  src="http://服务器IP:5200/?user=zhonghua&ws=ws://服务器IP:18789&pwd=your_password"
   width="100%"
   height="600"
   style="border: none;"
@@ -169,7 +169,7 @@ WebChat 通过单一 WebSocket 连接与 OpenClaw Gateway 通信，使用的 RPC
 
 ```javascript
 const username = getCurrentUser().name;
-const chatUrl = `http://10.0.0.100:5200/?user=${encodeURIComponent(username)}&ws=ws://10.0.0.100:18789&pwd=密码`;
+const chatUrl = `http://10.0.0.100:5200/?user=${encodeURIComponent(username)}&ws=ws://10.0.0.100:18789&pwd=your_password`;
 document.getElementById('chat-frame').src = chatUrl;
 ```
 
