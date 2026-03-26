@@ -52,6 +52,7 @@ type Pending = {
 export type GatewayClientOptions = {
   url: string;
   password?: string;
+  token?: string;
   onHello?: (hello: HelloOk) => void;
   onEvent?: (evt: GatewayEventFrame) => void;
   onClose?: (info: { code: number; reason: string }) => void;
@@ -70,6 +71,7 @@ export class GatewayClient {
   private connectSent = false;
   private backoffMs = 800;
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private opts: GatewayClientOptions;
 
   constructor(opts: GatewayClientOptions) {
@@ -90,6 +92,10 @@ export class GatewayClient {
     if (this.connectTimer) {
       clearTimeout(this.connectTimer);
       this.connectTimer = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
     this.ws?.close();
     this.ws = null;
@@ -160,7 +166,10 @@ export class GatewayClient {
     if (this.closed) return;
     const delay = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 1.7, 15000);
-    setTimeout(() => this.doConnect(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.doConnect();
+    }, delay);
   }
 
   private async sendConnect() {
@@ -188,7 +197,9 @@ export class GatewayClient {
       locale: navigator.language,
     };
 
-    if (this.opts.password) {
+    if (this.opts.token) {
+      (params.auth as Record<string, string>).deviceToken = this.opts.token;
+    } else if (this.opts.password) {
       (params.auth as Record<string, string>).password = this.opts.password;
     }
 

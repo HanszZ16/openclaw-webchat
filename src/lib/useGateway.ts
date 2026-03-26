@@ -180,6 +180,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     const client = new GatewayClient({
       url: config.wsUrl,
       password: config.password || undefined,
+      token: config.token || undefined,
       onHello: (h) => {
         setHello(h);
         setError(null);
@@ -201,6 +202,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
   // Load chat history when connected or session changes
   useEffect(() => {
     if (!connected || !clientRef.current) return;
+    let stale = false;
 
     const loadHistory = async () => {
       setLoading(true);
@@ -209,6 +211,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
           messages?: unknown[];
           thinkingLevel?: string;
         }>('chat.history', { sessionKey, limit: 200 });
+        if (stale) return;
         const msgs = Array.isArray(res.messages) ? res.messages : [];
         setMessages(
           msgs.map((m) => {
@@ -221,13 +224,14 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
           }),
         );
       } catch (err) {
-        setError(String(err));
+        if (!stale) setError(String(err));
       } finally {
-        setLoading(false);
+        if (!stale) setLoading(false);
       }
     };
 
     loadHistory();
+    return () => { stale = true; };
   }, [connected, sessionKey]);
 
   // Send message
@@ -325,6 +329,17 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
       } catch (err) {
         setError(String(err));
         setSending(false);
+        // Mark the last user message as failed
+        setMessages((prev) => {
+          const copy = [...prev];
+          for (let i = copy.length - 1; i >= 0; i--) {
+            if (copy[i].role === 'user') {
+              copy[i] = { ...copy[i], sendFailed: true };
+              break;
+            }
+          }
+          return copy;
+        });
       }
     },
     [connected, sessionKey],
@@ -371,6 +386,97 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     [connected, sessionKey],
   );
 
+  // Retry: remove last assistant message, resend the last user message
+  const retryLastMessage = useCallback(async () => {
+    if (!clientRef.current || !connected) return;
+    // Find the last user message
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx === -1) return;
+    const lastUserMsg = messages[lastUserIdx];
+    const userText = typeof lastUserMsg.content === 'string'
+      ? lastUserMsg.content
+      : lastUserMsg.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map((b) => b.text).join('');
+    if (!userText.trim()) return;
+
+    // Remove messages from lastUserIdx onwards (the user msg + assistant reply)
+    setMessages((prev) => prev.slice(0, lastUserIdx));
+    setSending(true);
+    setError(null);
+    setStream(null);
+    setStreamTools([]);
+
+    // Re-add user message
+    setMessages((prev) => [...prev, { ...lastUserMsg, timestamp: Date.now() }]);
+
+    try {
+      await clientRef.current.request('chat.send', {
+        sessionKey,
+        message: userText,
+        deliver: false,
+        idempotencyKey: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      });
+    } catch (err) {
+      setError(String(err));
+      setSending(false);
+      setMessages((prev) => {
+        const copy = [...prev];
+        for (let i = copy.length - 1; i >= 0; i--) {
+          if (copy[i].role === 'user') {
+            copy[i] = { ...copy[i], sendFailed: true };
+            break;
+          }
+        }
+        return copy;
+      });
+    }
+  }, [connected, sessionKey, messages]);
+
+  // Resend a failed message by index
+  const resendMessage = useCallback(async (msgIndex: number) => {
+    const msg = messages[msgIndex];
+    if (!msg || msg.role !== 'user' || !msg.sendFailed) return;
+    if (!clientRef.current || !connected) return;
+
+    const userText = typeof msg.content === 'string'
+      ? msg.content
+      : msg.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map((b) => b.text).join('');
+    if (!userText.trim()) return;
+
+    // Clear failed flag
+    setMessages((prev) => prev.map((m, i) => i === msgIndex ? { ...m, sendFailed: false } : m));
+    setSending(true);
+    setError(null);
+    setStream(null);
+    setStreamTools([]);
+
+    try {
+      await clientRef.current.request('chat.send', {
+        sessionKey,
+        message: userText,
+        deliver: false,
+        idempotencyKey: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      });
+    } catch (err) {
+      setError(String(err));
+      setSending(false);
+      setMessages((prev) => prev.map((m, i) => i === msgIndex ? { ...m, sendFailed: true } : m));
+    }
+  }, [connected, sessionKey, messages]);
+
+  // Switch to an existing session by key
+  const switchSession = useCallback((key: string) => {
+    localStorage.setItem('oc-session-key', key);
+    setSessionKey(key);
+    setMessages([]);
+    setStream(null);
+    setStreamTools([]);
+    setRunId(null);
+    setError(null);
+  }, []);
+
   // Clear history: delete current session on gateway + create new session
   const clearHistory = useCallback(async () => {
     if (clientRef.current && connected && sessionKey !== 'main') {
@@ -410,6 +516,9 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     newSession,
     clearHistory,
     switchModel,
+    switchSession,
+    retryLastMessage,
+    resendMessage,
     setError,
     client: clientRef,
   };

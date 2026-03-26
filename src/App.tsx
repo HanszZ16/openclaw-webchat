@@ -17,13 +17,14 @@ function App() {
   const [config, setConfig] = useState<ConnectionConfig | null>(() => {
     // iframe mode: use URL params directly
     if (embedParams.wsUrl) {
-      return { wsUrl: embedParams.wsUrl, password: embedParams.password || '' };
+      return { wsUrl: embedParams.wsUrl, password: embedParams.password || '', token: embedParams.token || undefined };
     }
-    // Normal mode: check localStorage
-    const url = localStorage.getItem('oc-ws-url');
-    const pwd = localStorage.getItem('oc-password');
+    // Normal mode: check sessionStorage
+    const url = sessionStorage.getItem('oc-ws-url');
+    const pwd = sessionStorage.getItem('oc-password');
+    const token = sessionStorage.getItem('oc-token');
     if (url) {
-      return { wsUrl: url, password: pwd || '' };
+      return { wsUrl: url, password: pwd || '', token: token || undefined };
     }
     return null;
   });
@@ -51,8 +52,9 @@ function App() {
   }, []);
 
   const handleDisconnect = useCallback(() => {
-    localStorage.removeItem('oc-ws-url');
-    localStorage.removeItem('oc-password');
+    sessionStorage.removeItem('oc-ws-url');
+    sessionStorage.removeItem('oc-password');
+    sessionStorage.removeItem('oc-token');
     setConfig(null);
     setLoginError(null);
   }, []);
@@ -106,6 +108,8 @@ function App() {
       onDisconnect={handleDisconnect}
       onClearError={() => gateway.setError(null)}
       onClearHistory={gateway.clearHistory}
+      onRetry={gateway.retryLastMessage}
+      onResend={gateway.resendMessage}
       embedMode={embedParams.embedUi}
       userName={embedParams.user}
     />
@@ -119,7 +123,15 @@ function App() {
   // Standalone mode: sidebar + content
   return (
     <div className="app-layout">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        clientRef={gateway.client}
+        connected={gateway.connected}
+        currentSessionKey={gateway.sessionKey}
+        onSwitchSession={gateway.switchSession}
+        onNewSession={gateway.newSession}
+      />
       <main className="app-content">
         {activeTab === 'chat' && chatView}
         {activeTab === 'admin' && <AdminPanel data={adminData} connected={gateway.connected} />}

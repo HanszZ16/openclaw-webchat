@@ -1,5 +1,5 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, X, Mic, MicOff, FileText, FileSpreadsheet, File as FileIcon, Loader2, Upload, AlertCircle } from 'lucide-react';
+import { useRef, useState, useCallback } from 'react';
+import { Send, Square, Paperclip, X, Mic, MicOff, FileText, FileSpreadsheet, File as FileIcon, Loader2, Upload, AlertCircle, RotateCw } from 'lucide-react';
 import type { Attachment } from '../lib/types';
 import { isImageFile, getFileCategory, parseFile, shouldUploadToServer, uploadFileToServer } from '../lib/fileParser';
 import { useVoiceInput } from '../lib/useVoiceInput';
@@ -34,18 +34,31 @@ function FileTypeIcon({ category, uploaded }: { category: string; uploaded?: boo
 }
 
 export function ChatInput({ onSend, onAbort, sending, disabled, disabledReason, assistantName }: Props) {
-  const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [processing, setProcessing] = useState(0); // count of files being processed
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Helper to get current text without re-renders
+  const getText = useCallback(() => textareaRef.current?.value ?? '', []);
+
+  // Helper to auto-resize textarea
+  const autoResize = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+  }, []);
+
   // Voice input with 2pass online/offline accumulation
   const { state: voiceState, toggle: toggleVoice } = useVoiceInput({
     asrUrl: '/ws-asr',
     onDisplayUpdate: (displayText) => {
-      setText(displayText);
+      if (textareaRef.current) {
+        textareaRef.current.value = displayText;
+        autoResize();
+      }
     },
     onError: (msg) => {
       setVoiceError(msg);
@@ -54,26 +67,25 @@ export function ChatInput({ onSend, onAbort, sending, disabled, disabledReason, 
   });
 
   const handleVoiceToggle = useCallback(() => {
-    toggleVoice(text);
-  }, [text, toggleVoice]);
+    toggleVoice(getText());
+  }, [getText, toggleVoice]);
 
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
-  }, [text]);
+  const handleInput = useCallback(() => {
+    autoResize();
+  }, [autoResize]);
 
   const handleSend = useCallback(() => {
     if (sending) { onAbort(); return; }
     if (processing > 0) return;
-    const trimmed = text.trim();
+    const trimmed = getText().trim();
     if (!trimmed && attachments.length === 0) return;
     onSend(trimmed, attachments.length > 0 ? attachments : undefined);
-    setText('');
+    if (textareaRef.current) {
+      textareaRef.current.value = '';
+      textareaRef.current.style.height = 'auto';
+    }
     setAttachments([]);
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  }, [text, attachments, sending, processing, onSend, onAbort]);
+  }, [attachments, sending, processing, onSend, onAbort, getText]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -135,6 +147,33 @@ export function ChatInput({ onSend, onAbort, sending, disabled, disabledReason, 
 
     setProcessing((n) => n - 1);
   }, []);
+
+  const retryFile = useCallback(async (attId: string) => {
+    const att = attachments.find((a) => a.id === attId);
+    if (!att) return;
+
+    // Reset status
+    setAttachments((prev) => prev.map((a) =>
+      a.id === attId ? { ...a, uploadStatus: 'uploading' as const, parseError: undefined } : a,
+    ));
+    setProcessing((n) => n + 1);
+
+    const useServerUpload = shouldUploadToServer(att.file);
+    if (useServerUpload) {
+      const result = await uploadFileToServer(att.file);
+      setAttachments((prev) => prev.map((a) =>
+        a.id === attId
+          ? { ...a, uploaded: result.success, serverPath: result.serverPath, uploadStatus: result.success ? 'done' : 'error', parseError: result.error }
+          : a,
+      ));
+    } else {
+      const result = await parseFile(att.file);
+      setAttachments((prev) => prev.map((a) =>
+        a.id === attId ? { ...a, textContent: result.text, parseError: result.error, uploadStatus: undefined } : a,
+      ));
+    }
+    setProcessing((n) => n - 1);
+  }, [attachments]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -202,6 +241,12 @@ export function ChatInput({ onSend, onAbort, sending, disabled, disabledReason, 
                       ) : att.uploadStatus === 'error' ? (
                         <span className="flex items-center gap-1 text-red-400">
                           <AlertCircle className="w-2.5 h-2.5" /> 上传失败
+                          <button
+                            onClick={(e) => { e.stopPropagation(); retryFile(att.id); }}
+                            className="ml-1 text-blue-500 hover:text-blue-600 flex items-center gap-0.5"
+                          >
+                            <RotateCw className="w-2.5 h-2.5" /> 重试
+                          </button>
                         </span>
                       ) : att.uploaded ? (
                         <span className="text-emerald-600">已上传 {formatSize(att.file.size)}</span>
@@ -210,7 +255,15 @@ export function ChatInput({ onSend, onAbort, sending, disabled, disabledReason, 
                           <Loader2 className="w-2.5 h-2.5 animate-spin" /> 解析中...
                         </span>
                       ) : att.parseError ? (
-                        <span className="text-red-400">解析失败</span>
+                        <span className="flex items-center gap-1 text-red-400">
+                          解析失败
+                          <button
+                            onClick={(e) => { e.stopPropagation(); retryFile(att.id); }}
+                            className="ml-1 text-blue-500 hover:text-blue-600 flex items-center gap-0.5"
+                          >
+                            <RotateCw className="w-2.5 h-2.5" /> 重试
+                          </button>
+                        </span>
                       ) : (
                         `${(att.textContent?.length ?? 0).toLocaleString()} 字符`
                       )}
@@ -242,11 +295,10 @@ export function ChatInput({ onSend, onAbort, sending, disabled, disabledReason, 
       )}
 
       {/* Main input container */}
-      <div className="bg-gray-50 border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+      <div className="bg-gray-50/80 border border-gray-200/60 rounded-2xl overflow-hidden shadow-sm transition-colors focus-within:border-emerald-300 focus-within:shadow-emerald-100/50">
         <textarea
           ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          onInput={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={disabledReason || `给 ${assistantName || '助手'} 发消息（回车发送）`}

@@ -1,14 +1,18 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Copy, Check, Star, User } from 'lucide-react';
+import { Copy, Check, Star, User, RefreshCw, AlertCircle, RotateCw } from 'lucide-react';
 import { useState } from 'react';
 import type { ChatMessage, ContentBlock } from '../lib/types';
 
 type Props = {
   message: ChatMessage;
   assistantName?: string;
+  /** Called when user clicks "regenerate" on an assistant message */
+  onRetry?: () => void;
+  /** Called when user clicks "resend" on a failed user message */
+  onResend?: () => void;
 };
 
 function extractText(content: ContentBlock[] | string): string {
@@ -41,6 +45,18 @@ function CopyButton({ text }: { text: string }) {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Fallback for non-HTTPS contexts
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     });
   };
 
@@ -59,11 +75,71 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Copy button that appears on code blocks inside markdown */
+function CodeBlockCopy({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="code-copy-btn"
+      title="复制代码"
+    >
+      {copied ? (
+        <><Check className="w-3 h-3" /> 已复制</>
+      ) : (
+        <><Copy className="w-3 h-3" /> 复制</>
+      )}
+    </button>
+  );
+}
+
+/** Extract text content from code block children */
+function extractCodeText(children: React.ReactNode): string {
+  if (typeof children === 'string') return children;
+  if (Array.isArray(children)) return children.map(extractCodeText).join('');
+  if (children && typeof children === 'object' && 'props' in (children as ReactElement)) {
+    return extractCodeText((children as ReactElement).props.children);
+  }
+  return String(children ?? '');
+}
+
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-export function MessageBubble({ message, assistantName }: Props) {
+/** Custom markdown components with code block copy */
+const markdownComponents = {
+  pre({ children, ...props }: React.ComponentPropsWithoutRef<'pre'> & { children?: React.ReactNode }) {
+    const code = extractCodeText(children);
+    return (
+      <div className="code-block-wrapper">
+        <CodeBlockCopy code={code.replace(/\n$/, '')} />
+        <pre {...props}>{children}</pre>
+      </div>
+    );
+  },
+};
+
+export function MessageBubble({ message, assistantName, onRetry, onResend }: Props) {
   const isUser = message.role === 'user';
   const text = useMemo(() => extractText(message.content), [message.content]);
   const images = useMemo(() => extractImages(message.content), [message.content]);
@@ -86,18 +162,35 @@ export function MessageBubble({ message, assistantName }: Props) {
             </div>
           )}
           {text && (
-            <div className="bg-blue-600 text-white rounded-2xl rounded-br-sm px-4 py-2.5 shadow-sm">
+            <div className={`rounded-2xl rounded-br-sm px-4 py-2.5 shadow-sm ${
+              message.sendFailed
+                ? 'bg-red-50 border border-red-200 text-red-700'
+                : 'bg-gradient-to-br from-emerald-600 to-emerald-700 text-white shadow-emerald-200/50'
+            }`}>
               <p className="whitespace-pre-wrap break-words text-[15px]">{text}</p>
             </div>
           )}
-          {message.timestamp && (
-            <div className="flex items-center gap-2 text-[11px] text-gray-400 px-1">
-              <span>我</span>
-              <span>{formatTime(message.timestamp)}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2 text-[11px] text-gray-400 px-1">
+            {message.sendFailed && (
+              <>
+                <span className="flex items-center gap-1 text-red-500">
+                  <AlertCircle className="w-3 h-3" /> 发送失败
+                </span>
+                {onResend && (
+                  <button
+                    onClick={onResend}
+                    className="flex items-center gap-0.5 text-blue-500 hover:text-blue-600 transition-colors"
+                  >
+                    <RotateCw className="w-3 h-3" /> 重发
+                  </button>
+                )}
+              </>
+            )}
+            <span>我</span>
+            {message.timestamp && <span>{formatTime(message.timestamp)}</span>}
+          </div>
         </div>
-        <div className="shrink-0 w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center shadow-sm">
+        <div className="shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-sm shadow-emerald-200/50">
           <User className="w-4 h-4 text-white" />
         </div>
       </div>
@@ -124,8 +217,8 @@ export function MessageBubble({ message, assistantName }: Props) {
         )}
 
         {text && (
-          <div className="markdown-body text-[15px] text-gray-800 bg-gray-50 rounded-2xl rounded-bl-sm px-4 py-3 border border-gray-100 inline-block">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          <div className="markdown-body text-[15px] text-gray-800 bg-white rounded-2xl rounded-bl-sm px-5 py-3.5 border border-gray-100/80 shadow-sm inline-block">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>
               {text}
             </ReactMarkdown>
           </div>
@@ -148,6 +241,15 @@ export function MessageBubble({ message, assistantName }: Props) {
           )}
           {/* Action buttons - show on hover */}
           {text && <CopyButton text={text} />}
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-100 text-gray-300 hover:text-emerald-600"
+              title="重新生成"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-100 text-gray-300 hover:text-yellow-500" title="收藏">
             <Star className="w-3.5 h-3.5" />
           </button>

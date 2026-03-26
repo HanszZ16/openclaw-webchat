@@ -1,6 +1,7 @@
 export type ConnectionConfig = {
   wsUrl: string;
   password: string;
+  token?: string;
 };
 
 export type ContentBlock =
@@ -19,6 +20,8 @@ export type ChatMessage = {
   // Metadata
   usage?: { input_tokens?: number; output_tokens?: number };
   model?: string;
+  /** True if the message failed to send */
+  sendFailed?: boolean;
 };
 
 export type ToolEntry = {
