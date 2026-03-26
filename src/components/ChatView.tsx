@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Plus,
   LogOut,
-  Wifi,
   WifiOff,
   ArrowDown,
   MessageSquare,

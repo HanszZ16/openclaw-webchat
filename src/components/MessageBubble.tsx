@@ -117,7 +117,7 @@ function extractCodeText(children: React.ReactNode): string {
   if (typeof children === 'string') return children;
   if (Array.isArray(children)) return children.map(extractCodeText).join('');
   if (children && typeof children === 'object' && 'props' in (children as ReactElement)) {
-    return extractCodeText((children as ReactElement).props.children);
+    return extractCodeText((children as ReactElement<{ children?: React.ReactNode }>).props.children);
   }
   return String(children ?? '');
 }
