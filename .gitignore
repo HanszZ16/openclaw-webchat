@@ -28,6 +28,10 @@ dist-ssr
 
 # Runtime
 uploads/
+data/
+
+# Abandoned features
+agent-admin-api/
 
 # Archive
 *.zip

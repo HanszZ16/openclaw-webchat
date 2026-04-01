@@ -455,3 +455,166 @@ body {
 .animate-spin {
   animation: spin 1s linear infinite;
 }
+
+/* ── OperateCard (CoPaw-style collapsible card) ── */
+.operate-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #ffffff;
+}
+.operate-card:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+.operate-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+.operate-card-header:hover {
+  background: #f9fafb;
+}
+.operate-card-body {
+  border-top: 1px solid #f3f4f6;
+  padding: 0;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease, padding 0.25s ease;
+}
+.operate-card-body.open {
+  max-height: 600px;
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+.operate-card-block {
+  margin-bottom: 8px;
+}
+.operate-card-block:last-child {
+  margin-bottom: 0;
+}
+.operate-card-block-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.operate-card-code {
+  font-family: "Fira Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  overflow-x: auto;
+  max-height: 250px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #374151;
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 transparent;
+}
+
+/* ── Thinking card (CoPaw DeepThinking style) ── */
+.thinking-card {
+  border: 1px solid #e9d5ff;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #faf5ff, #f5f3ff);
+  transition: border-color 0.2s;
+}
+.thinking-card:hover {
+  border-color: #d8b4fe;
+}
+.thinking-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.thinking-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.thinking-card-body {
+  border-top: 1px solid #ede9fe;
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease, padding 0.25s ease;
+  padding: 0 12px;
+}
+.thinking-card-body.open {
+  max-height: 400px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #e9d5ff transparent;
+}
+.thinking-card-content {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #6b21a8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.thinking-card-preview {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #a78bfa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.thinking-card-preview:hover {
+  color: #7c3aed;
+}
+
+/* Skill badge */
+.skill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f5f3ff;
+  color: #7c3aed;
+  border: 1px solid #e9d5ff;
+  font-weight: 500;
+}
+
+/* Status dot animation */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+.status-dot-active {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b82f6;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+.status-dot-done {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+}

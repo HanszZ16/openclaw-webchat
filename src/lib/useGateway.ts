@@ -13,6 +13,7 @@ export type GatewayState = {
   hello: HelloOk | null;
   messages: ChatMessage[];
   stream: string | null;
+  streamThinking: string | null;
   streamTools: ToolEntry[];
   loading: boolean;
   sending: boolean;
@@ -34,6 +35,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
   const [hello, setHello] = useState<HelloOk | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [stream, setStream] = useState<string | null>(null);
+  const [streamThinking, setStreamThinking] = useState<string | null>(null);
   const [streamTools, setStreamTools] = useState<ToolEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -47,85 +49,138 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
 
   const runIdRef = useRef(runId);
   runIdRef.current = runId;
+  const streamToolsRef = useRef(streamTools);
+  streamToolsRef.current = streamTools;
+  const streamThinkingRef = useRef(streamThinking);
+  streamThinkingRef.current = streamThinking;
+  const sessionKeyRef = useRef(sessionKey);
+  sessionKeyRef.current = sessionKey;
+
+  // ── Server-side turn cache: persist tool/thinking data across refreshes ──
+  const saveTurnToServer = useCallback(async (
+    sk: string, ts: number,
+    data: { tools?: ToolEntry[]; thinking?: string; cleanText?: string; model?: string; usage?: unknown },
+  ) => {
+    try {
+      await fetch('/api/turns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionKey: sk, timestamp: ts, data }),
+      });
+    } catch { /* fire and forget */ }
+  }, []);
+
+  const loadTurnsFromServer = useCallback(async (sk: string): Promise<Record<string, {
+    tools?: ToolEntry[]; thinking?: string; cleanText?: string; model?: string; usage?: { input_tokens?: number; output_tokens?: number };
+  }>> => {
+    try {
+      const res = await fetch(`/api/turns?sessionKey=${encodeURIComponent(sk)}`);
+      if (!res.ok) return {};
+      const data = await res.json();
+      return data.turns || {};
+    } catch { return {}; }
+  }, []);
+
+  // ── Skill inference: guess which skill triggered a tool call ──
+  const inferSkill = useCallback((name: string, args: unknown): string | undefined => {
+    const argsStr = typeof args === 'string' ? args : JSON.stringify(args ?? '');
+    if (name === 'exec' || name === 'shell') {
+      if (/\bgh\s/.test(argsStr) || /github\.com/i.test(argsStr)) return 'github';
+      if (/\bgit\s/.test(argsStr)) return 'git';
+      if (/\bnpm\s|yarn\s|pnpm\s|bun\s/.test(argsStr)) return 'nodejs';
+      if (/\bdocker\s/.test(argsStr)) return 'docker';
+      if (/\bkubectl\s/.test(argsStr)) return 'kubernetes';
+      if (/\bcurl\s|wget\s/.test(argsStr)) return 'http';
+      if (/\bpython\s|pip\s/.test(argsStr)) return 'python';
+    }
+    if (name === 'web_search' || name === 'search') return 'web-search';
+    if (name === 'web_fetch' || name === 'fetch') return 'web-fetch';
+    if (name === 'browser' || name === 'browser_navigate' || name === 'browser_click') return 'browser';
+    if (name === 'canvas' || name === 'draw') return 'canvas';
+    if (name === 'memory_read' || name === 'memory_write') return 'memory';
+    return undefined;
+  }, []);
+
+  // ── Helpers ──
+  const parseContentBlocks = (content: unknown): ContentBlock[] => {
+    if (typeof content === 'string') return [{ type: 'text', text: content }];
+    if (Array.isArray(content)) return content as ContentBlock[];
+    return [];
+  };
+
+  const extractText = (blocks: ContentBlock[]): string =>
+    blocks
+      .filter((b): b is { type: 'text'; text: string } =>
+        b != null && typeof b === 'object' && 'type' in b && b.type === 'text' && typeof (b as { text?: string }).text === 'string')
+      .map((b) => b.text)
+      .join('\n');
+
+  const collectStreamState = () => ({
+    thinking: streamThinkingRef.current || undefined,
+    tools: streamToolsRef.current.length > 0 ? [...streamToolsRef.current] : undefined,
+  });
+
+  const resetStreamState = () => {
+    setStream(null);
+    setStreamThinking(null);
+    setStreamTools([]);
+    setRunId(null);
+    setSending(false);
+  };
 
   // Handle chat events
   const handleChatRun = useCallback((payload: ChatRunPayload) => {
     if (payload.state === 'delta') {
       setRunId(payload.runId);
-      // Delta message contains FULL accumulated text (not incremental)
       const msg = payload.message as Record<string, unknown> | undefined;
       if (msg) {
-        const content = msg.content;
-        if (typeof content === 'string') {
-          setStream(content);
-        } else if (Array.isArray(content)) {
-          const texts: string[] = [];
-          for (const block of content) {
-            if (block && typeof block === 'object' && 'type' in block) {
-              if (block.type === 'text' && typeof block.text === 'string') {
-                texts.push(block.text);
-              }
-            }
-          }
-          if (texts.length > 0) {
-            setStream(texts.join(''));
-          }
-        }
+        const text = extractText(parseContentBlocks(msg.content));
+        if (text) setStream(text);
       }
     } else if (payload.state === 'final') {
-      // Finalize: add complete message
       const msg = payload.message as Record<string, unknown> | undefined;
       if (msg) {
-        const content = msg.content;
-        let blocks: ContentBlock[];
-        if (typeof content === 'string') {
-          blocks = [{ type: 'text', text: content }];
-        } else if (Array.isArray(content)) {
-          blocks = content as ContentBlock[];
-        } else {
-          blocks = [];
-        }
-        const finalMsg: ChatMessage = {
+        const blocks = parseContentBlocks(msg.content);
+        const ts = (msg.timestamp as number) ?? Date.now();
+        const { thinking, tools } = collectStreamState();
+        const cleanText = extractText(blocks) || undefined;
+        const msgUsage = payload.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+        const msgModel = (msg.model as string) || undefined;
+
+        setMessages((prev) => [...prev, {
           role: 'assistant',
           content: blocks,
-          timestamp: (msg.timestamp as number) ?? Date.now(),
-        };
-        setMessages((prev) => [...prev, finalMsg]);
+          timestamp: ts,
+          thinking,
+          tools,
+          usage: msgUsage,
+          model: msgModel,
+        }]);
+
+        if (tools || thinking) {
+          saveTurnToServer(sessionKeyRef.current, ts, { tools, thinking, cleanText, model: msgModel, usage: msgUsage });
+        }
       }
-      setStream(null);
-      setStreamTools([]);
-      setRunId(null);
-      setSending(false);
+      resetStreamState();
     } else if (payload.state === 'aborted') {
-      // Add partial message
       const msg = payload.message as Record<string, unknown> | undefined;
       if (msg) {
-        const content = msg.content;
-        let blocks: ContentBlock[];
-        if (typeof content === 'string') {
-          blocks = [{ type: 'text', text: content }];
-        } else if (Array.isArray(content)) {
-          blocks = content as ContentBlock[];
-        } else {
-          blocks = [];
-        }
+        const blocks = parseContentBlocks(msg.content);
         if (blocks.length > 0) {
-          setMessages((prev) => [
-            ...prev,
-            { role: 'assistant', content: blocks, timestamp: Date.now() },
-          ]);
+          const { thinking, tools } = collectStreamState();
+          setMessages((prev) => [...prev, {
+            role: 'assistant',
+            content: blocks,
+            timestamp: Date.now(),
+            thinking,
+            tools,
+          }]);
         }
       }
-      setStream(null);
-      setStreamTools([]);
-      setRunId(null);
-      setSending(false);
+      resetStreamState();
     } else if (payload.state === 'error') {
       setError(payload.errorMessage ?? 'Unknown error');
-      setStream(null);
-      setStreamTools([]);
-      setRunId(null);
-      setSending(false);
+      resetStreamState();
     }
   }, []);
 
@@ -139,7 +194,9 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
             ? {
                 ...t,
                 phase: data.phase,
-                output: data.phase === 'result' ? String(data.result ?? '') : (data.partialResult ?? t.output),
+                output: data.phase === 'result'
+                  ? (data.result != null ? String(data.result) : t.output ?? '')
+                  : (data.partialResult ?? t.output),
               }
             : t,
         );
@@ -150,12 +207,22 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
           toolCallId: data.toolCallId,
           name: data.name,
           args: data.args,
-          output: data.partialResult ?? (data.phase === 'result' ? String(data.result ?? '') : undefined),
+          output: data.partialResult ?? (data.phase === 'result' && data.result != null ? String(data.result) : undefined),
           phase: data.phase,
           startedAt: Date.now(),
+          skillHint: inferSkill(data.name, data.args),
         },
       ];
     });
+  }, [inferSkill]);
+
+  // Handle agent.thinking events
+  const handleThinkingEvent = useCallback((data: { text?: string; delta?: string }) => {
+    if (data.text != null) {
+      setStreamThinking(data.text);
+    } else if (data.delta != null) {
+      setStreamThinking((prev) => (prev ?? '') + data.delta);
+    }
   }, []);
 
   // Handle events
@@ -164,13 +231,15 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
       if (evt.event === 'chat') {
         handleChatRun(evt.payload as ChatRunPayload);
       } else if (evt.event === 'agent') {
-        const p = evt.payload as { stream?: string; data?: ToolEventData } | undefined;
+        const p = evt.payload as { stream?: string; data?: unknown } | undefined;
         if (p?.stream === 'tool' && p?.data) {
-          handleToolEvent(p.data);
+          handleToolEvent(p.data as ToolEventData);
+        } else if (p?.stream === 'thinking' && p?.data) {
+          handleThinkingEvent(p.data as { text?: string; delta?: string });
         }
       }
     },
-    [handleChatRun, handleToolEvent],
+    [handleChatRun, handleToolEvent, handleThinkingEvent],
   );
 
   // Connect to gateway
@@ -207,22 +276,114 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     const loadHistory = async () => {
       setLoading(true);
       try {
-        const res = await clientRef.current!.request<{
-          messages?: unknown[];
-          thinkingLevel?: string;
-        }>('chat.history', { sessionKey, limit: 200 });
+        // Fetch history and turn cache in parallel
+        const [histRes, turnsCache] = await Promise.all([
+          clientRef.current!.request<{
+            messages?: unknown[];
+            thinkingLevel?: string;
+          }>('chat.history', { sessionKey, limit: 200 }),
+          loadTurnsFromServer(sessionKey),
+        ]);
         if (stale) return;
-        const msgs = Array.isArray(res.messages) ? res.messages : [];
-        setMessages(
-          msgs.map((m) => {
-            const msg = m as Record<string, unknown>;
-            return {
-              role: ((msg.role as string) ?? 'assistant') as ChatMessage['role'],
-              content: msg.content as ContentBlock[] | string,
-              timestamp: msg.timestamp as number | undefined,
-            };
-          }),
-        );
+        const msgs = Array.isArray(histRes.messages) ? histRes.messages : [];
+        const cacheEntries = Object.entries(turnsCache).sort(([a], [b]) => Number(a) - Number(b));
+
+        // ── Match cache entries to history messages by content similarity ──
+        const matchMap = new Map<number, typeof turnsCache[string]>();
+        const usedCacheKeys = new Set<string>();
+
+        for (let i = 0; i < msgs.length; i++) {
+          const msg = msgs[i] as Record<string, unknown>;
+          if (msg.role !== 'assistant') continue;
+          const msgText = extractText(parseContentBlocks(msg.content));
+          if (!msgText) continue;
+
+          let bestKey = '';
+          let bestScore = 0;
+          for (const [key, val] of cacheEntries) {
+            if (usedCacheKeys.has(key) || !val.cleanText) continue;
+            const clean = val.cleanText;
+            let score = 0;
+            if (msgText.includes(clean)) score = clean.length;
+            else if (clean.includes(msgText)) score = msgText.length;
+            else {
+              // Prefix comparison for partial matches
+              const prefix = clean.slice(0, 100);
+              if (msgText.includes(prefix)) score = prefix.length;
+            }
+            if (score > bestScore) { bestScore = score; bestKey = key; }
+          }
+          if (bestKey && bestScore >= 30) {
+            matchMap.set(i, turnsCache[bestKey]);
+            usedCacheKeys.add(bestKey);
+          }
+        }
+
+        // ── Build filtered message list ──
+        const builtMessages: ChatMessage[] = [];
+        let skipToolOutput = false;
+
+        for (let idx = 0; idx < msgs.length; idx++) {
+          const msg = msgs[idx] as Record<string, unknown>;
+          const role = ((msg.role as string) ?? 'assistant') as ChatMessage['role'];
+          const content = msg.content as ContentBlock[] | string;
+          const ts = msg.timestamp as number | undefined;
+          const usage = msg.usage as { input?: number; output?: number; input_tokens?: number; output_tokens?: number } | undefined;
+          const cached = matchMap.get(idx);
+
+          // Skip internal message types (toolResult, tool, system)
+          if (role === 'toolResult' as string || role === 'tool' || role === 'system') continue;
+
+          // User message resets skip state
+          if (role === 'user') skipToolOutput = false;
+
+          // Skip assistant messages with raw toolCall/tool_use content
+          if (!cached && Array.isArray(content)) {
+            const hasToolCall = (content as Array<Record<string, unknown>>).some((b) => b.type === 'tool_use' || b.type === 'toolCall');
+            if (hasToolCall) continue;
+          }
+
+          // Skip raw assistant messages following a cached turn with tools
+          if (skipToolOutput && role === 'assistant' && !cached) continue;
+
+          skipToolOutput = !!(cached?.tools?.length);
+
+          // Build display content
+          let displayContent: ContentBlock[] | string;
+          if (cached?.cleanText) {
+            displayContent = [{ type: 'text' as const, text: cached.cleanText }];
+          } else if (role === 'user') {
+            // Strip "System: [...]" log lines prepended by Gateway
+            const stripSystemLines = (text: string) => text.replace(/^(System:\s*\[.*?\].*\n?)+/gm, '').trim();
+            if (typeof content === 'string') {
+              displayContent = stripSystemLines(content) || content;
+            } else if (Array.isArray(content)) {
+              displayContent = (content as ContentBlock[])
+                .map((b) => {
+                  if (b && typeof b === 'object' && 'type' in b && b.type === 'text' && typeof (b as { text: string }).text === 'string') {
+                    return { ...b, text: stripSystemLines((b as { text: string }).text) } as ContentBlock;
+                  }
+                  return b;
+                })
+                .filter((b) => !(b && typeof b === 'object' && 'type' in b && b.type === 'text' && !(b as { text: string }).text));
+            } else {
+              displayContent = content;
+            }
+          } else {
+            displayContent = content;
+          }
+
+          builtMessages.push({
+            role,
+            content: displayContent,
+            timestamp: ts,
+            model: cached?.model || (msg.model as string | undefined),
+            usage: cached?.usage || (usage ? { input_tokens: usage.input_tokens ?? usage.input, output_tokens: usage.output_tokens ?? usage.output } : undefined),
+            tools: cached?.tools?.length ? cached.tools : undefined,
+            thinking: cached?.thinking,
+          });
+        }
+        setMessages(builtMessages);
       } catch (err) {
         if (!stale) setError(String(err));
       } finally {
@@ -232,7 +393,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
 
     loadHistory();
     return () => { stale = true; };
-  }, [connected, sessionKey]);
+  }, [connected, sessionKey, loadTurnsFromServer]);
 
   // Send message
   const sendMessage = useCallback(
@@ -301,6 +462,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
       setSending(true);
       setError(null);
       setStream(null);
+      setStreamThinking(null);
       setStreamTools([]);
 
       try {
@@ -365,6 +527,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     setSessionKey(key);
     setMessages([]);
     setStream(null);
+    setStreamThinking(null);
     setStreamTools([]);
     setRunId(null);
     setError(null);
@@ -472,6 +635,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     setSessionKey(key);
     setMessages([]);
     setStream(null);
+    setStreamThinking(null);
     setStreamTools([]);
     setRunId(null);
     setError(null);
@@ -495,6 +659,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     setSessionKey(key);
     setMessages([]);
     setStream(null);
+    setStreamThinking(null);
     setStreamTools([]);
     setRunId(null);
     setError(null);
@@ -505,6 +670,7 @@ export function useGateway(config: ConnectionConfig | null, options?: UseGateway
     hello,
     messages,
     stream,
+    streamThinking,
     streamTools,
     loading,
     sending,

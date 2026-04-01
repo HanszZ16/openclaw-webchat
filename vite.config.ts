@@ -184,8 +184,95 @@ function uploadPlugin() {
   }
 }
 
+// Dev-only: turn cache plugin for persisting tool/thinking data
+function turnsCachePlugin() {
+  const TURNS_DIR_DEV = path.join(__dirname, 'data', 'turns')
+  return {
+    name: 'turns-cache-api',
+    configureServer(server: ViteDevServer) {
+      if (!fs.existsSync(TURNS_DIR_DEV)) {
+        fs.mkdirSync(TURNS_DIR_DEV, { recursive: true })
+      }
+
+      // POST /api/turns — save turn data
+      server.middlewares.use('/api/turns', (req, res, next) => {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST',
+            'Access-Control-Allow-Headers': 'Content-Type',
+          })
+          res.end()
+          return
+        }
+
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = []
+          req.on('data', (c: Buffer) => chunks.push(c))
+          req.on('end', () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString())
+              const { sessionKey, timestamp, data } = body
+              if (!sessionKey || !timestamp || !data) {
+                res.writeHead(400, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: 'Missing fields' }))
+                return
+              }
+              const safeSession = String(sessionKey).replace(/[^a-zA-Z0-9_\-]/g, '_')
+              const sessionDir = path.join(TURNS_DIR_DEV, safeSession)
+              if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir, { recursive: true })
+              fs.writeFileSync(path.join(sessionDir, `${timestamp}.json`), JSON.stringify(data))
+              // Keep only last 200
+              const files = fs.readdirSync(sessionDir).sort()
+              if (files.length > 200) {
+                for (let i = 0; i < files.length - 200; i++) fs.unlinkSync(path.join(sessionDir, files[i]))
+              }
+              res.writeHead(200, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ ok: true }))
+            } catch (err) {
+              res.writeHead(500, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: String(err) }))
+            }
+          })
+          return
+        }
+
+        if (req.method === 'GET') {
+          try {
+            const urlObj = new URL(req.url || '', `http://${req.headers.host}`)
+            const sessionKey = urlObj.searchParams.get('sessionKey')
+            if (!sessionKey) {
+              res.writeHead(400, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'Missing sessionKey' }))
+              return
+            }
+            const safeSession = String(sessionKey).replace(/[^a-zA-Z0-9_\-]/g, '_')
+            const sessionDir = path.join(TURNS_DIR_DEV, safeSession)
+            const turns: Record<string, unknown> = {}
+            if (fs.existsSync(sessionDir)) {
+              for (const file of fs.readdirSync(sessionDir)) {
+                if (!file.endsWith('.json')) continue
+                const ts = file.replace('.json', '')
+                try { turns[ts] = JSON.parse(fs.readFileSync(path.join(sessionDir, file), 'utf-8')) } catch { /* skip */ }
+              }
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ turns }))
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: String(err) }))
+          }
+          return
+        }
+
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), wsProxyPlugin(), uploadPlugin()],
+  plugins: [react(), tailwindcss(), wsProxyPlugin(), uploadPlugin(), turnsCachePlugin()],
   server: {
     host: '0.0.0.0',
     port: 5200,

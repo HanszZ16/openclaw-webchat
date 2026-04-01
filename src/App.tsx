@@ -95,6 +95,7 @@ function App() {
       connected={gateway.connected}
       messages={gateway.messages}
       stream={gateway.stream}
+      streamThinking={gateway.streamThinking}
       streamTools={gateway.streamTools}
       loading={gateway.loading}
       sending={gateway.sending}

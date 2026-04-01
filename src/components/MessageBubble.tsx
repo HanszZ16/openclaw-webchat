@@ -1,10 +1,10 @@
-import { useMemo, type ReactElement } from 'react';
+import { useMemo, useState, type ReactElement } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Copy, Check, Star, User, RefreshCw, AlertCircle, RotateCw } from 'lucide-react';
-import { useState } from 'react';
+import { Copy, Check, Star, User, RefreshCw, AlertCircle, RotateCw, Brain, ChevronDown, ChevronRight } from 'lucide-react';
 import type { ChatMessage, ContentBlock } from '../lib/types';
+import { ToolCard } from './ToolCard';
 
 type Props = {
   message: ChatMessage;
@@ -139,6 +139,39 @@ const markdownComponents = {
   },
 };
 
+function ThinkingBlock({ text, loading }: { text: string; loading?: boolean }) {
+  const [expanded, setExpanded] = useState(loading ?? false);
+  const preview = text.length > 100 ? text.slice(0, 100) + '...' : text;
+
+  return (
+    <div className="thinking-card mb-2">
+      <div className="thinking-card-header" onClick={() => setExpanded(!expanded)}>
+        {loading ? (
+          <div className="w-4 h-4 border-2 border-purple-200 border-t-purple-500 rounded-full animate-spin shrink-0" />
+        ) : (
+          <Brain className="w-4 h-4 text-purple-500 shrink-0" />
+        )}
+        <span className="thinking-card-title">{loading ? '思考中...' : '思考过程'}</span>
+        <span className="ml-auto">
+          {expanded
+            ? <ChevronDown className="w-3.5 h-3.5 text-purple-400" />
+            : <ChevronRight className="w-3.5 h-3.5 text-purple-400" />
+          }
+        </span>
+      </div>
+      {expanded ? (
+        <div className={`thinking-card-body open`}>
+          <div className="thinking-card-content">{text}</div>
+        </div>
+      ) : (
+        <div className="thinking-card-preview" onClick={() => setExpanded(true)}>
+          {preview}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MessageBubble({ message, assistantName, onRetry, onResend }: Props) {
   const isUser = message.role === 'user';
   const text = useMemo(() => extractText(message.content), [message.content]);
@@ -200,8 +233,20 @@ export function MessageBubble({ message, assistantName, onRetry, onResend }: Pro
   // Assistant message
   return (
     <div className="flex gap-3 group ml-2">
-      {/* Content - inline-block so width fits content */}
+      {/* Content */}
       <div className="min-w-0 max-w-[85%]">
+        {/* Thinking block */}
+        {message.thinking && <ThinkingBlock text={message.thinking} />}
+
+        {/* Tool calls */}
+        {message.tools && message.tools.length > 0 && (
+          <div className="space-y-1.5 mb-2">
+            {message.tools.map((tool) => (
+              <ToolCard key={tool.toolCallId} tool={tool} defaultCollapsed />
+            ))}
+          </div>
+        )}
+
         {images.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
             {images.map((src, i) => (

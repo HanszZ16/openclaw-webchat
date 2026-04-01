@@ -191,7 +191,7 @@ export class GatewayClient {
       },
       role: 'operator',
       scopes: ['operator.admin', 'operator.read', 'operator.write', 'operator.approvals', 'operator.pairing'],
-      caps: ['tool-events'],
+      caps: ['tool-events', 'thinking-events'],
       auth: {} as Record<string, string>,
       userAgent: navigator.userAgent,
       locale: navigator.language,

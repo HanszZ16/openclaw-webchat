@@ -22,6 +22,10 @@ export type ChatMessage = {
   model?: string;
   /** True if the message failed to send */
   sendFailed?: boolean;
+  /** Thinking/reasoning content from the model */
+  thinking?: string;
+  /** Tool calls executed during this turn */
+  tools?: ToolEntry[];
 };
 
 export type ToolEntry = {
@@ -31,6 +35,8 @@ export type ToolEntry = {
   output?: string;
   phase: 'start' | 'update' | 'result';
   startedAt: number;
+  /** Inferred skill that likely triggered this tool */
+  skillHint?: string;
 };
 
 export type Attachment = {

@@ -19,6 +19,7 @@ type Props = {
   connected: boolean;
   messages: ChatMessage[];
   stream: string | null;
+  streamThinking: string | null;
   streamTools: ToolEntry[];
   loading: boolean;
   sending: boolean;
@@ -44,6 +45,7 @@ export function ChatView({
   connected,
   messages,
   stream,
+  streamThinking,
   streamTools,
   loading,
   sending,
@@ -89,7 +91,7 @@ export function ChatView({
     if (autoScroll) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, stream, streamTools, autoScroll]);
+  }, [messages, stream, streamThinking, streamTools, autoScroll]);
 
   return (
     <div className="flex flex-col h-screen bg-white">
@@ -209,10 +211,27 @@ export function ChatView({
           );
         })}
 
+        {/* Streaming thinking */}
+        {streamThinking && (
+          <div className="flex gap-3 ml-6">
+            <div className="min-w-0 flex-1 max-w-[85%]">
+              <div className="thinking-card">
+                <div className="thinking-card-header">
+                  <div className="w-4 h-4 border-2 border-purple-200 border-t-purple-500 rounded-full animate-spin shrink-0" />
+                  <span className="thinking-card-title">思考中...</span>
+                </div>
+                <div className="thinking-card-body open">
+                  <div className="thinking-card-content">{streamThinking}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Streaming tools */}
         {streamTools.length > 0 && (
           <div className="flex gap-3 ml-6">
-            <div className="space-y-1.5 flex-1 min-w-0">
+            <div className="space-y-1.5 flex-1 min-w-0 max-w-[85%]">
               {streamTools.map((tool) => (
                 <ToolCard key={tool.toolCallId} tool={tool} />
               ))}
@@ -234,7 +253,7 @@ export function ChatView({
         )}
 
         {/* Sending indicator */}
-        {sending && !stream && streamTools.length === 0 && (
+        {sending && !stream && !streamThinking && streamTools.length === 0 && (
           <div className="flex gap-3 ml-6">
             <div className="flex gap-1.5 py-3 px-5 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl border border-emerald-100">
               <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />

@@ -13,10 +13,14 @@ const FUNASR_WS_URL = process.env.FUNASR_WS_URL || 'ws://127.0.0.1:10096';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, 'dist');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const TURNS_DIR = path.join(__dirname, 'data', 'turns');
 
-// Ensure upload directory exists
+// Ensure directories exist
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+if (!fs.existsSync(TURNS_DIR)) {
+  fs.mkdirSync(TURNS_DIR, { recursive: true });
 }
 
 // MIME types for static files
@@ -191,6 +195,74 @@ const server = http.createServer((req, res) => {
     } catch {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ files: [] }));
+    }
+    return;
+  }
+
+  // === Turn Cache API: persist tool/thinking data across refreshes ===
+  if (req.method === 'POST' && req.url === '/api/turns') {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        const { sessionKey, timestamp, data } = body;
+        if (!sessionKey || !timestamp || !data) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing sessionKey, timestamp, or data' }));
+          return;
+        }
+        // Sanitize sessionKey for filesystem safety
+        const safeSession = String(sessionKey).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const sessionDir = path.join(TURNS_DIR, safeSession);
+        if (!fs.existsSync(sessionDir)) {
+          fs.mkdirSync(sessionDir, { recursive: true });
+        }
+        const filePath = path.join(sessionDir, `${timestamp}.json`);
+        fs.writeFileSync(filePath, JSON.stringify(data));
+        // Cleanup: keep only last 200 turns per session
+        const files = fs.readdirSync(sessionDir).sort();
+        if (files.length > 200) {
+          for (let i = 0; i < files.length - 200; i++) {
+            fs.unlinkSync(path.join(sessionDir, files[i]));
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && req.url?.startsWith('/api/turns')) {
+    try {
+      const urlObj = new URL(req.url, `http://${req.headers.host}`);
+      const sessionKey = urlObj.searchParams.get('sessionKey');
+      if (!sessionKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing sessionKey' }));
+        return;
+      }
+      const safeSession = String(sessionKey).replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const sessionDir = path.join(TURNS_DIR, safeSession);
+      const turns = {};
+      if (fs.existsSync(sessionDir)) {
+        for (const file of fs.readdirSync(sessionDir)) {
+          if (!file.endsWith('.json')) continue;
+          const ts = file.replace('.json', '');
+          try {
+            turns[ts] = JSON.parse(fs.readFileSync(path.join(sessionDir, file), 'utf-8'));
+          } catch { /* skip corrupted files */ }
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ turns }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
     }
     return;
   }
