@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import { LoginPage } from './components/LoginPage';
 import { ChatView } from './components/ChatView';
 import { Sidebar, type TabId } from './components/Sidebar';
@@ -12,6 +12,12 @@ import type { ConnectionConfig } from './lib/types';
 const embedParams = getEmbedParams();
 
 const isEmbedMode = embedParams.embedUi;
+const MOBILE_SIDEBAR_BREAKPOINT = 768;
+const MOBILE_SIDEBAR_DRAG_THRESHOLD = 24;
+
+function isMobileWidth() {
+  return typeof window !== 'undefined' && window.innerWidth <= MOBILE_SIDEBAR_BREAKPOINT;
+}
 
 function App() {
   const [config, setConfig] = useState<ConnectionConfig | null>(() => {
@@ -60,6 +66,10 @@ function App() {
   }, []);
 
   const [activeTab, setActiveTab] = useState<TabId>('chat');
+  const [isMobileViewport, setIsMobileViewport] = useState(isMobileWidth);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileWidth());
+  const dragStartXRef = useRef<number | null>(null);
+  const draggedRef = useRef(false);
   const adminData = useAdminData(gateway.client, gateway.hello, gateway.connected);
 
   const [showLogin, setShowLogin] = useState(!config);
@@ -84,6 +94,65 @@ function App() {
     }, 5000);
     return () => clearTimeout(timer);
   }, [config, gateway.connected, gateway.hello]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileViewport(isMobileWidth());
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    setSidebarOpen(!isMobileViewport);
+  }, [isMobileViewport]);
+
+  const handleTabChange = useCallback((tab: TabId) => {
+    setActiveTab(tab);
+    if (isMobileViewport) {
+      setSidebarOpen(false);
+    }
+  }, [isMobileViewport]);
+
+  const handleHandlerPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    dragStartXRef.current = event.clientX;
+    draggedRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const handleHandlerPointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (dragStartXRef.current === null) return;
+    const deltaX = event.clientX - dragStartXRef.current;
+    if (Math.abs(deltaX) > 3) {
+      draggedRef.current = true;
+    }
+    if (!sidebarOpen && deltaX > MOBILE_SIDEBAR_DRAG_THRESHOLD) {
+      setSidebarOpen(true);
+      dragStartXRef.current = event.clientX;
+    } else if (sidebarOpen && deltaX < -MOBILE_SIDEBAR_DRAG_THRESHOLD) {
+      setSidebarOpen(false);
+      dragStartXRef.current = event.clientX;
+    }
+  }, [sidebarOpen]);
+
+  const handleHandlerPointerUp = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!draggedRef.current) {
+      setSidebarOpen((open) => !open);
+    }
+    dragStartXRef.current = null;
+    draggedRef.current = false;
+  }, []);
+
+  const handleHandlerPointerCancel = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragStartXRef.current = null;
+    draggedRef.current = false;
+  }, []);
 
   // In embed mode with URL params, skip login page (auto-connect)
   if (showLogin && !gateway.connected && !embedParams.wsUrl) {
@@ -123,16 +192,32 @@ function App() {
 
   // Standalone mode: sidebar + content
   return (
-    <div className="app-layout">
-      <Sidebar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        clientRef={gateway.client}
-        connected={gateway.connected}
-        currentSessionKey={gateway.sessionKey}
-        onSwitchSession={gateway.switchSession}
-        onNewSession={gateway.newSession}
-      />
+    <div className={`app-layout ${isMobileViewport ? 'app-layout-mobile' : ''}`}>
+      <div className={`sidebar-shell ${sidebarOpen ? 'sidebar-shell-open' : 'sidebar-shell-closed'}`}>
+        <Sidebar
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          clientRef={gateway.client}
+          connected={gateway.connected}
+          currentSessionKey={gateway.sessionKey}
+          onSwitchSession={gateway.switchSession}
+          onNewSession={gateway.newSession}
+        />
+      </div>
+      {isMobileViewport && sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      {isMobileViewport && (
+        <button
+          type="button"
+          className={`sidebar-handler ${sidebarOpen ? 'sidebar-handler-open' : ''}`}
+          onPointerDown={handleHandlerPointerDown}
+          onPointerMove={handleHandlerPointerMove}
+          onPointerUp={handleHandlerPointerUp}
+          onPointerCancel={handleHandlerPointerCancel}
+          aria-label={sidebarOpen ? '收起侧边栏' : '展开侧边栏'}
+        >
+          <span className="sidebar-handler-grip" />
+        </button>
+      )}
       <main className="app-content">
         {activeTab === 'chat' && chatView}
         {activeTab === 'admin' && <AdminPanel data={adminData} connected={gateway.connected} />}

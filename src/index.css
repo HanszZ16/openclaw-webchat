@@ -146,6 +146,13 @@ body {
   width: 100%;
   overflow: hidden;
 }
+.sidebar-shell {
+  width: 72px;
+  min-width: 72px;
+  height: 100vh;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
 .app-content {
   flex: 1;
   min-width: 0;
@@ -294,6 +301,55 @@ body {
   background: #ecfdf5 !important;
   color: #059669;
   box-shadow: inset 0 0 0 1px #a7f3d0;
+}
+
+/* ── Mobile Sidebar ── */
+.app-layout-mobile .sidebar-shell {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+}
+.app-layout-mobile .sidebar-shell.sidebar-shell-closed {
+  transform: translateX(-72px);
+  pointer-events: none;
+}
+.app-layout-mobile .sidebar-shell.sidebar-shell-open {
+  transform: translateX(0);
+}
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.2);
+  z-index: 35;
+}
+.sidebar-handler {
+  position: fixed;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 64px;
+  border: none;
+  border-radius: 0 8px 8px 0;
+  background: rgba(5, 150, 105, 0.92);
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.15);
+  cursor: ew-resize;
+  transform: translateY(-50%);
+  z-index: 70;
+  transition: left 0.2s ease, opacity 0.2s ease;
+  touch-action: none;
+  padding: 0;
+}
+.sidebar-handler.sidebar-handler-open {
+  left: 72px;
+}
+.sidebar-handler-grip {
+  display: block;
+  width: 3px;
+  height: 24px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
 }
 
 /* ── Admin Panel ── */
