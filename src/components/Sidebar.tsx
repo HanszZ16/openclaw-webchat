@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect, type MutableRefObject } from 'react';
-import { MessageSquare, LayoutDashboard, Zap, Plus, ChevronLeft, Loader2 } from 'lucide-react';
+import { MessageSquare, LayoutDashboard, Zap, Store, Plus, ChevronLeft, Loader2 } from 'lucide-react';
 import type { GatewayClient, SessionRow } from '../lib/gateway';
 
-export type TabId = 'chat' | 'admin' | 'skills';
+export type TabId = 'chat' | 'admin' | 'skills' | 'market';
 
 type Props = {
   activeTab: TabId;
@@ -18,6 +18,7 @@ const tabs: { id: TabId; label: string; icon: typeof MessageSquare }[] = [
   { id: 'chat', label: '对话', icon: MessageSquare },
   { id: 'admin', label: '管理面板', icon: LayoutDashboard },
   { id: 'skills', label: '技能', icon: Zap },
+  { id: 'market', label: '市场', icon: Store },
 ];
 
 function formatRelative(ts?: number | null): string {

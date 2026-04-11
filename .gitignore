@@ -26,6 +26,9 @@ dist-ssr
 # Claude Code
 .claude/
 
+# Environment (contains secrets)
+.env
+
 # Runtime
 uploads/
 data/

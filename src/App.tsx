@@ -4,6 +4,7 @@ import { ChatView } from './components/ChatView';
 import { Sidebar, type TabId } from './components/Sidebar';
 import { AdminPanel } from './components/AdminPanel';
 import { SkillsPanel } from './components/SkillsPanel';
+import { SkillMarketPanel } from './components/SkillMarketPanel';
 import { useGateway } from './lib/useGateway';
 import { useAdminData } from './lib/useAdminData';
 import { getEmbedParams } from './lib/embedParams';
@@ -227,6 +228,7 @@ function App() {
             connected={gateway.connected}
           />
         )}
+        {activeTab === 'market' && <SkillMarketPanel />}
       </main>
     </div>
   );
